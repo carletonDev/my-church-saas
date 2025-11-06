@@ -294,16 +294,20 @@ async function upsertSubscription(
   // Use the tier price ID if it exists, otherwise use base fee
   const stripePriceId = tierItem?.price.id || baseFeeItem?.price.id || subscription.items.data[0]?.price.id;
 
+  // Handle Stripe subscription properties (may be snake_case)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const subData = subscription as any;
+
   const subscriptionData = {
     stripeCustomerId: subscription.customer as string,
     stripeSubscriptionId: subscription.id,
     stripePriceId: stripePriceId,
-    stripeCurrentPeriodEnd: new Date(subscription.current_period_end * 1000),
+    stripeCurrentPeriodEnd: new Date((subData.current_period_end || subData.currentPeriodEnd) * 1000),
     status: mapStripeStatus(subscription.status),
     quantity: totalSeats, // Store total seats (including free 50)
-    cancelAtPeriodEnd: subscription.cancel_at_period_end,
-    trialEnd: subscription.trial_end
-      ? new Date(subscription.trial_end * 1000)
+    cancelAtPeriodEnd: subData.cancel_at_period_end || subData.cancelAtPeriodEnd || false,
+    trialEnd: (subData.trial_end || subData.trialEnd)
+      ? new Date((subData.trial_end || subData.trialEnd) * 1000)
       : null,
   };
 

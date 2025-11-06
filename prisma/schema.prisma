@@ -1,0 +1,201 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DIRECT_URL")
+}
+
+// ============================================================================
+// USER MODEL
+// ============================================================================
+// The User model is directly linked to Supabase Auth (auth.users table).
+// The id field is a String in Prisma but maps to PostgreSQL's uuid type.
+// This ensures compatibility with Supabase Auth's UUID-based user IDs.
+// ============================================================================
+
+model User {
+  id        String   @id @db.Uuid // Maps to Supabase auth.users.id (UUID)
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Organization relationship - every user belongs to one organization
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // User roles within the organization
+  role UserRole @default(MEMBER)
+
+  // Messages authored by this user in discussions
+  messages Message[]
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("users")
+}
+
+// ============================================================================
+// USER ROLE ENUM
+// ============================================================================
+// Defines the hierarchy of user permissions within an organization
+// ============================================================================
+
+enum UserRole {
+  OWNER   // Full control, billing management
+  ADMIN   // Can manage users and discussions
+  MEMBER  // Standard user access
+}
+
+// ============================================================================
+// ORGANIZATION MODEL
+// ============================================================================
+// The core entity for multi-tenancy and billing.
+// All subscriptions are tied to the Organization, not individual users.
+// ============================================================================
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique // URL-friendly identifier
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Organization settings
+  maxMembers Int @default(10) @map("max_members") // Based on subscription tier
+
+  // Relationships
+  users        User[]
+  subscription Subscription?
+  discussions  Discussion[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+// ============================================================================
+// SUBSCRIPTION MODEL
+// ============================================================================
+// Manages Stripe subscription data at the organization level.
+// Implements per-seat graduated pricing for church community groups.
+// ============================================================================
+
+model Subscription {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Organization relationship (one-to-one)
+  organizationId String       @unique @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Stripe integration fields
+  stripeCustomerId       String  @unique @map("stripe_customer_id") // Stripe Customer ID
+  stripeSubscriptionId   String  @unique @map("stripe_subscription_id") // Stripe Subscription ID
+  stripePriceId          String  @map("stripe_price_id") // Current Stripe Price ID
+  stripeCurrentPeriodEnd DateTime @map("stripe_current_period_end") // Subscription period end
+
+  // Subscription details
+  status   SubscriptionStatus @default(INCOMPLETE)
+  quantity Int                @default(1) // Number of seats (users)
+  
+  // Billing cycle tracking
+  cancelAtPeriodEnd Boolean @default(false) @map("cancel_at_period_end")
+  canceledAt        DateTime? @map("canceled_at")
+  trialEnd          DateTime? @map("trial_end")
+
+  @@index([organizationId])
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionId])
+  @@map("subscriptions")
+}
+
+// ============================================================================
+// SUBSCRIPTION STATUS ENUM
+// ============================================================================
+// Mirrors Stripe subscription statuses for local state management
+// ============================================================================
+
+enum SubscriptionStatus {
+  INCOMPLETE          // Subscription created but payment pending
+  INCOMPLETE_EXPIRED  // Payment failed and grace period expired
+  TRIALING            // In trial period
+  ACTIVE              // Active and paid
+  PAST_DUE            // Payment failed but still accessible
+  CANCELED            // User canceled
+  UNPAID              // Payment failed and no longer accessible
+}
+
+// ============================================================================
+// DISCUSSION MODEL
+// ============================================================================
+// Represents a live discussion thread within an organization.
+// Used for real-time community engagement powered by Supabase Realtime.
+// ============================================================================
+
+model Discussion {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String
+  slug      String   // URL-friendly identifier within the organization
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Organization relationship
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Discussion metadata
+  description String?
+  isActive    Boolean @default(true) @map("is_active") // Can be closed/archived
+  isLocked    Boolean @default(false) @map("is_locked") // Prevents new messages
+
+  // Real-time messages in this discussion
+  messages Message[]
+
+  @@unique([organizationId, slug]) // Unique slug per organization
+  @@index([organizationId])
+  @@index([organizationId, isActive])
+  @@map("discussions")
+}
+
+// ============================================================================
+// MESSAGE MODEL
+// ============================================================================
+// Individual messages within a discussion thread.
+// This table is monitored by Supabase Realtime for live updates.
+// Message creation uses Server Actions; clients subscribe via Realtime.
+// ============================================================================
+
+model Message {
+  id        String   @id @default(uuid()) @db.Uuid
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Discussion relationship
+  discussionId String     @map("discussion_id") @db.Uuid
+  discussion   Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+
+  // Author relationship
+  authorId String @map("author_id") @db.Uuid
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Message metadata
+  isEdited Boolean @default(false) @map("is_edited")
+  isDeleted Boolean @default(false) @map("is_deleted") // Soft delete for moderation
+
+  // Optional: Reply threading (self-referential)
+  parentMessageId String?  @map("parent_message_id") @db.Uuid
+  parentMessage   Message? @relation("MessageReplies", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  replies         Message[] @relation("MessageReplies")
+
+  @@index([discussionId, createdAt]) // Optimized for chronological queries
+  @@index([authorId])
+  @@index([discussionId, isDeleted]) // Filter out deleted messages efficiently
+  @@map("messages")
+}

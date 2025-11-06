@@ -27,6 +27,22 @@ import { STRIPE_WEBHOOK_EVENTS, STRIPE_PRICE_IDS } from "@/lib/stripe/config";
 import { SubscriptionStatus } from "@prisma/client";
 
 /**
+ * Extended Stripe Invoice type with subscription property
+ */
+interface StripeInvoiceWithSubscription extends Stripe.Invoice {
+  subscription?: string | Stripe.Subscription | null;
+}
+
+/**
+ * Extended Stripe Subscription type with all required properties
+ */
+interface StripeSubscriptionComplete extends Stripe.Subscription {
+  current_period_end: number;
+  status: Stripe.Subscription.Status;
+  cancel_at_period_end: boolean;
+}
+
+/**
  * POST handler for Stripe webhooks
  */
 export async function POST(request: NextRequest) {
@@ -119,7 +135,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId) as unknown as StripeSubscriptionComplete;
 
   // Create or update subscription in database
   await upsertSubscription(organizationId, subscription);
@@ -137,7 +153,7 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
     return;
   }
 
-  await upsertSubscription(organizationId, subscription);
+  await upsertSubscription(organizationId, subscription as unknown as StripeSubscriptionComplete);
 }
 
 /**
@@ -152,7 +168,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
     return;
   }
 
-  await upsertSubscription(organizationId, subscription);
+  await upsertSubscription(organizationId, subscription as unknown as StripeSubscriptionComplete);
 }
 
 /**
@@ -175,7 +191,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   await prisma.subscription.update({
     where: { id: dbSubscription.id },
     data: {
-      status: "CANCELED",
+      status: SubscriptionStatus.CANCELED,
       canceledAt: new Date(),
     },
   });
@@ -186,15 +202,14 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 /**
  * Handles successful invoice payment
  */
-async function handleInvoicePaid(invoice: Stripe.Invoice) {
+async function handleInvoicePaid(invoice: StripeInvoiceWithSubscription) {
   console.log("Processing invoice.paid:", invoice.id);
 
-  // Invoice subscription can be a string ID or expanded object
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const subscription = (invoice as any).subscription;
-  const subscriptionId = typeof subscription === 'string'
-    ? subscription
-    : subscription?.id;
+  // Handle subscription property which can be string | Subscription | null
+  const subscriptionId = typeof invoice.subscription === 'string'
+    ? invoice.subscription
+    : invoice.subscription?.id;
+
   if (!subscriptionId) {
     return;
   }
@@ -210,10 +225,10 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   }
 
   // Update subscription to active if it was past due
-  if (dbSubscription.status === "PAST_DUE") {
+  if (dbSubscription.status === SubscriptionStatus.PAST_DUE) {
     await prisma.subscription.update({
       where: { id: dbSubscription.id },
-      data: { status: "ACTIVE" },
+      data: { status: SubscriptionStatus.ACTIVE },
     });
   }
 
@@ -223,15 +238,14 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
 /**
  * Handles failed invoice payment
  */
-async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
+async function handleInvoicePaymentFailed(invoice: StripeInvoiceWithSubscription) {
   console.log("Processing invoice.payment_failed:", invoice.id);
 
-  // Invoice subscription can be a string ID or expanded object
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const subscription = (invoice as any).subscription;
-  const subscriptionId = typeof subscription === 'string'
-    ? subscription
-    : subscription?.id;
+  // Handle subscription property which can be string | Subscription | null
+  const subscriptionId = typeof invoice.subscription === 'string'
+    ? invoice.subscription
+    : invoice.subscription?.id;
+
   if (!subscriptionId) {
     return;
   }
@@ -249,7 +263,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   // Update subscription status to past due
   await prisma.subscription.update({
     where: { id: dbSubscription.id },
-    data: { status: "PAST_DUE" },
+    data: { status: SubscriptionStatus.PAST_DUE },
   });
 
   // TODO: Send email notification to organization owner
@@ -262,7 +276,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
  */
 async function upsertSubscription(
   organizationId: string,
-  subscription: Stripe.Subscription
+  subscription: StripeSubscriptionComplete
 ) {
   // Extract total seats from metadata (stored during checkout/updates)
   const totalSeats = parseInt(subscription.metadata?.totalSeats || "1", 10);

@@ -146,19 +146,14 @@ export function formatPrice(priceInCents: number): string {
  */
 export function getPricingSummary() {
   return PRICING_TIERS.map((tier) => {
-    let monthlyMaxCents: number;
-
     // Calculate paid seats for the minimum of the range
     const minPaidSeats = Math.max(0, tier.minSeats - FREE_SEATS_THRESHOLD);
     const monthlyMinCents = FLAT_FEE_CENTS + (minPaidSeats * tier.pricePerPaidSeat);
-    
+
     // Calculate paid seats for the maximum of the range
-    if (tier.maxSeats !== null) {
-      const maxPaidSeats = Math.max(0, tier.maxSeats - FREE_SEATS_THRESHOLD);
-      monthlyMaxCents = FLAT_FEE_CENTS + (maxPaidSeats * tier.pricePerPaidSeat);
-    } else {
-      monthlyMaxCents = 0; // Placeholder for Enterprise
-    }
+    const monthlyMaxCents = tier.maxSeats !== null
+      ? FLAT_FEE_CENTS + (Math.max(0, tier.maxSeats - FREE_SEATS_THRESHOLD) * tier.pricePerPaidSeat)
+      : 0; // Placeholder for Enterprise
 
     return {
       label: tier.label,

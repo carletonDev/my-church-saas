@@ -146,12 +146,11 @@ export function formatPrice(priceInCents: number): string {
  */
 export function getPricingSummary() {
   return PRICING_TIERS.map((tier) => {
-    let monthlyMinCents: number;
     let monthlyMaxCents: number;
-    
+
     // Calculate paid seats for the minimum of the range
     const minPaidSeats = Math.max(0, tier.minSeats - FREE_SEATS_THRESHOLD);
-    monthlyMinCents = FLAT_FEE_CENTS + (minPaidSeats * tier.pricePerPaidSeat);
+    const monthlyMinCents = FLAT_FEE_CENTS + (minPaidSeats * tier.pricePerPaidSeat);
     
     // Calculate paid seats for the maximum of the range
     if (tier.maxSeats !== null) {

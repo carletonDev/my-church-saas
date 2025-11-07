@@ -148,7 +148,7 @@ export async function signInWithMagicLink(
   try {
     const supabase = await createClient();
     const headersList = await headers();
-    const origin = headersList.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const origin = process.env.NEXT_PUBLIC_APP_URL || headersList.get("origin") || "http://localhost:3000";
 
     const { error } = await supabase.auth.signInWithOtp({
       email,
